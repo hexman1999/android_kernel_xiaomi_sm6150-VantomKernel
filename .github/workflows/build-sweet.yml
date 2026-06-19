@@ -227,16 +227,9 @@ jobs:
 
           echo "::endgroup::"
 
-      - name: Upload kernel zip
+      - name: Upload AnyKernel3 zip
         uses: actions/upload-artifact@v4
         with:
-          name: VantomKernel-sweet-${{ steps.ts.outputs.DATE }}
+          name: AnyKernel3-VantomKernel-sweet-${{ steps.ts.outputs.DATE }}
           path: VantomKernel-sweet-*.zip
           retention-days: 30
-
-      - name: Upload kernel image (raw)
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-image-${{ steps.ts.outputs.DATE }}
-          path: out/arch/arm64/boot/Image.gz*
-          retention-days: 14
