@@ -26,7 +26,21 @@ echo "-- Patching sucompat.c header for 4.14..."
 SUCOMPAT_FILE="$KSU_DIR/kernel/feature/sucompat.c"
 sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|' "$SUCOMPAT_FILE"
 
-# 3. init.c: comment out MODULE_IMPORT_NS (requires 5.3+)
+# 3. Replace strncpy_from_user_nofault (added in 5.8) with strncpy_from_user
+echo "-- Patching strncpy_from_user_nofault -> strncpy_from_user..."
+for f in \
+    "$KSU_DIR/kernel/feature/sucompat.c" \
+    "$KSU_DIR/kernel/sulog/event.c" \
+    "$KSU_DIR/kernel/runtime/ksud_integration.c"; do
+    sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' "$f"
+done
+
+# 4. Replace ksys_close (added in 4.19) with sys_close in util.h
+echo "-- Patching ksys_close -> sys_close for 4.14..."
+UTIL_FILE="$KSU_DIR/kernel/include/util.h"
+sed -i 's/#define ksu_close_fd ksys_close/#define ksu_close_fd sys_close/' "$UTIL_FILE"
+
+# 5. init.c: comment out MODULE_IMPORT_NS (requires 5.3+)
 echo "-- Patching init.c for MODULE_IMPORT_NS..."
 INIT_FILE="$KSU_DIR/kernel/core/init.c"
 python3 -c "
