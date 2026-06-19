@@ -55,6 +55,37 @@ jobs:
           git clone https://github.com/KOWX712/KernelSU.git --depth=1 KernelSU
           echo "-> KernelSU commit: $(git -C KernelSU rev-parse --short HEAD)"
           echo "-> KernelSU branch: $(git -C KernelSU branch --show-current)"
+
+          echo "-- Patching syscall_hook.h for ARM64 support..."
+          python3 -c "
+with open('KernelSU/kernel/hook/syscall_hook.h', 'r') as f:
+    content = f.read()
+content = content.replace(
+    '#endif\n\nextern syscall_fn_t',
+    '#endif\n#if defined(__aarch64__)\ntypedef long (*syscall_fn_t)(const struct pt_regs *);\n#endif\n\nextern syscall_fn_t',
+    1
+)
+with open('KernelSU/kernel/hook/syscall_hook.h', 'w') as f:
+    f.write(content)
+"
+          echo "-> Syscall hook patched for ARM64"
+
+          echo "-- Patching init.c for MODULE_IMPORT_NS compat (4.14)..."
+          python3 -c "
+with open('KernelSU/kernel/core/init.c', 'r') as f:
+    content = f.read()
+content = content.replace(
+    'MODULE_IMPORT_NS(\"VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver\");',
+    '/* MODULE_IMPORT_NS requires 5.3+ */\n// MODULE_IMPORT_NS(\"VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver\");'
+)
+content = content.replace(
+    'MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);',
+    '// MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);'
+)
+with open('KernelSU/kernel/core/init.c', 'w') as f:
+    f.write(content)
+"
+          echo "-> init.c patched for MODULE_IMPORT_NS compat"
           echo "::endgroup::"
 
       - name: Clone Baseband-guard
