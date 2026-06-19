@@ -21,7 +21,12 @@ with open('$HOOK_FILE', 'w') as f:
     f.write(content)
 "
 
-# 2. init.c: comment out MODULE_IMPORT_NS (requires 5.3+)
+# 2. sucompat.c: linux/pgtable.h was added in 4.15, use asm/pgtable.h on 4.14
+echo "-- Patching sucompat.c header for 4.14..."
+SUCOMPAT_FILE="$KSU_DIR/kernel/feature/sucompat.c"
+sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|' "$SUCOMPAT_FILE"
+
+# 3. init.c: comment out MODULE_IMPORT_NS (requires 5.3+)
 echo "-- Patching init.c for MODULE_IMPORT_NS..."
 INIT_FILE="$KSU_DIR/kernel/core/init.c"
 python3 -c "
