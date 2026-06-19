@@ -1,0 +1,234 @@
+name: Build VantomKernel (sweet)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - kowsu-ksu
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      timestamp: ${{ steps.ts.outputs.TIME }}
+      date: ${{ steps.ts.outputs.DATE }}
+
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+
+      - name: Timestamp
+        id: ts
+        run: |
+          DATE=$(date +'%Y%m%d')
+          TIME=$(date +'%s')
+          echo "DATE=$DATE" >> $GITHUB_OUTPUT
+          echo "TIME=$TIME" >> $GITHUB_OUTPUT
+
+      - name: Install build dependencies
+        run: |
+          echo "::group::Installing dependencies"
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc build-essential bison flex zip \
+            libc6 curl libstdc++6 git wget libssl-dev zstd \
+            lld python3 patchutils ccache p7zip-full
+          echo "::endgroup::"
+
+      - name: Restore toolchain cache
+        id: tc-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            clang
+            gcc64
+            gcc32
+          key: toolchains-${{ runner.os }}-v2
+
+      - name: Clone KernelSU
+        run: |
+          echo "::group::Cloning KOWX712/KernelSU"
+          git clone https://github.com/KOWX712/KernelSU.git --depth=1 KernelSU
+          echo "-> KernelSU commit: $(git -C KernelSU rev-parse --short HEAD)"
+          echo "-> KernelSU branch: $(git -C KernelSU branch --show-current)"
+          echo "::endgroup::"
+
+      - name: Clone Baseband-guard
+        run: |
+          echo "::group::Cloning vc-teahouse/Baseband-guard"
+          git clone https://github.com/vc-teahouse/Baseband-guard.git --depth=1 Baseband-guard
+          echo "-> BBG commit: $(git -C Baseband-guard rev-parse --short HEAD)"
+          echo "::endgroup::"
+
+      - name: Setup toolchains
+        run: |
+          echo "::group::Setting up Clang and GCC toolchains"
+
+          if [ ! -d clang/.git ]; then
+            echo "-- Cloning Clang (r416183b)..."
+            rm -rf clang
+            git clone https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git --depth=1 clang
+          else
+            echo "-- Using cached Clang"
+          fi
+
+          if [ ! -d gcc64/.git ]; then
+            echo "-- Cloning GCC 4.9 (aarch64)..."
+            rm -rf gcc64
+            git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git --depth=1 gcc64
+          else
+            echo "-- Using cached GCC64"
+          fi
+
+          if [ ! -d gcc32/.git ]; then
+            echo "-- Cloning GCC 4.9 (arm)..."
+            rm -rf gcc32
+            git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git --depth=1 gcc32
+          else
+            echo "-- Using cached GCC32"
+          fi
+
+          echo "-- Verifying toolchains:"
+          ls -lh clang/bin/clang 2>/dev/null && echo "  clang: OK" || echo "  clang: MISSING"
+          ls -lh gcc64/bin/aarch64-linux-android-ld 2>/dev/null && echo "  gcc64: OK" || echo "  gcc64: MISSING"
+          ls -lh gcc32/bin/arm-linux-androideabi-ld 2>/dev/null && echo "  gcc32: OK" || echo "  gcc32: MISSING"
+
+          echo "::endgroup::"
+
+      - name: Configure kernel
+        run: |
+          echo "::group::Kernel configuration"
+
+          export PATH="$PWD/clang/bin:$PWD/gcc64/bin:$PWD/gcc32/bin:/usr/bin:$PATH"
+
+          echo "-- Toolchain versions:"
+          clang --version 2>&1 | head -2
+          aarch64-linux-android-ld --version 2>&1 | head -1
+
+          echo "-- Cleaning out directory..."
+          rm -rf out
+          mkdir -p out
+
+          echo "-- Generating defconfig..."
+          make O=out \
+            ARCH=arm64 \
+            LLVM=1 LLVM_IAS=1 \
+            CC=clang LD=ld.lld AR=llvm-ar AS=llvm-as \
+            NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            sweet_defconfig
+
+          echo "-- Final .config summary:"
+          grep -E "CONFIG_(KSU|SUSFS|BBG|NOMOUNT|LOCALVERSION|KPROBES|KALLSYMS)" out/.config || true
+
+          echo "::endgroup::"
+
+      - name: Build kernel
+        run: |
+          echo "::group::Starting kernel compilation"
+          echo "============================================"
+          echo " DEVICE: sweet"
+          echo " KSU:    KOWX712/KernelSU"
+          echo " SUSFS:  enabled"
+          echo " BBG:    enabled"
+          echo " NOMOUNT: enabled"
+          echo " DROIDSPACES: enabled"
+          echo "============================================"
+
+          export PATH="$PWD/clang/bin:$PWD/gcc64/bin:$PWD/gcc32/bin:/usr/bin:$PATH"
+
+          # Verify symlinks resolved
+          echo "-- Checking symlinks:"
+          readlink -f drivers/kernelsu && echo "  drivers/kernelsu -> OK" || echo "  drivers/kernelsu -> MISSING!"
+          readlink -f security/baseband-guard && echo "  security/baseband-guard -> OK" || echo "  security/baseband-guard -> MISSING!"
+
+          echo "-- Starting make (V=1 for verbose output)..."
+          make -j$(nproc --all) O=out V=1 \
+            ARCH=arm64 \
+            LLVM=1 LLVM_IAS=1 \
+            CC=clang LD=ld.lld AR=llvm-ar AS=llvm-as \
+            NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+            CLANG_TRIPLE=aarch64-linux-gnu-
+
+          echo "============================================"
+          echo " BUILD COMPLETE"
+          echo "============================================"
+
+          echo "::endgroup::"
+
+      - name: Verify build output
+        run: |
+          echo "::group::Build artifacts"
+          if [ -f out/arch/arm64/boot/Image.gz ]; then
+            echo "-- Image.gz found!"
+            ls -lh out/arch/arm64/boot/Image.gz
+            file out/arch/arm64/boot/Image.gz
+          elif [ -f out/arch/arm64/boot/Image ]; then
+            echo "-- Image found!"
+            ls -lh out/arch/arm64/boot/Image
+            file out/arch/arm64/boot/Image
+          else
+            echo "!! No kernel image found in out/arch/arm64/boot/"
+            find out/arch/arm64/boot -type f 2>/dev/null || echo "   (directory empty or missing)"
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      - name: Clone AnyKernel3 and pack zip
+        run: |
+          echo "::group::Packing AnyKernel3 zip"
+
+          echo "-- Cloning AnyKernel3..."
+          git clone https://github.com/riarumoda/AnyKernel3.git --depth=1 AnyKernel3
+
+          echo "-- Copying kernel image..."
+          if [ -f out/arch/arm64/boot/Image.gz ]; then
+            cp out/arch/arm64/boot/Image.gz AnyKernel3/
+          elif [ -f out/arch/arm64/boot/Image ]; then
+            cp out/arch/arm64/boot/Image AnyKernel3/
+          else
+            echo "!! No kernel image to pack!"
+            exit 1
+          fi
+
+          echo "-- Configuring AnyKernel3 for sweet..."
+          sed -i 's/device.name1=sweet/device.name1=sweet/' AnyKernel3/anykernel.sh
+          sed -i 's/device.name2=sweetin/device.name2=sweetin/' AnyKernel3/anykernel.sh
+          sed -i 's/supported.versions=11-16/supported.versions=15-16/' AnyKernel3/anykernel.sh
+
+          echo "-- Adding build info to banner..."
+          sed -i '$a \\nBuild: VantomKernel | Date: ${{ steps.ts.outputs.DATE }} | KSU: KOWX712 | SUSFS: yes | BBG: yes | NoMount: yes | Droidspaces: yes' AnyKernel3/banner
+
+          echo "-- Creating zip..."
+          TIMESTAMP="${{ steps.ts.outputs.DATE }}-${{ steps.ts.outputs.TIME }}"
+          ZIPNAME="VantomKernel-sweet-$TIMESTAMP.zip"
+          cd AnyKernel3
+          zip -r9 "../$ZIPNAME" ./*
+          cd ..
+
+          echo "-- Zip created: $ZIPNAME"
+          ls -lh "$ZIPNAME"
+
+          echo "::endgroup::"
+
+      - name: Upload kernel zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: VantomKernel-sweet-${{ steps.ts.outputs.DATE }}
+          path: VantomKernel-sweet-*.zip
+          retention-days: 30
+
+      - name: Upload kernel image (raw)
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-image-${{ steps.ts.outputs.DATE }}
+          path: out/arch/arm64/boot/Image.gz*
+          retention-days: 14
