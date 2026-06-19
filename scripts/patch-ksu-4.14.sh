@@ -40,7 +40,11 @@ echo "-- Patching ksys_close -> sys_close for 4.14..."
 UTIL_FILE="$KSU_DIR/kernel/include/util.h"
 sed -i 's/#define ksu_close_fd ksys_close/#define ksu_close_fd sys_close/' "$UTIL_FILE"
 
-# 5. init.c: comment out MODULE_IMPORT_NS (requires 5.3+)
+# 5. lsm_hook.c: replace with list_head compatible version (pre-5.10)
+echo "-- Patching lsm_hook.c for list_head (4.14)..."
+python3 "$(dirname "$0")/patch-lsm-hook-4.14.py" "$KSU_DIR/kernel/hook/lsm_hook.c"
+
+# 6. init.c: comment out MODULE_IMPORT_NS (requires 5.3+)
 echo "-- Patching init.c for MODULE_IMPORT_NS..."
 INIT_FILE="$KSU_DIR/kernel/core/init.c"
 python3 -c "
